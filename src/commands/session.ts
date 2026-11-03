@@ -8,6 +8,10 @@
  */
 import type { CommandDeps, CategorizedCommand } from './types.ts';
 import { getScopePeer } from '../shared/index.ts';
+// 折叠 / 截断 / 渲染都挪到 ../tickets-view.ts，/new 和 /tickets 共用一份（FISH_PATCH tickets-view）
+import { openTickets, renderTicketBlock } from '../tickets-view.ts';
+
+export { clipGoal, openTickets, renderTicketBlock } from '../tickets-view.ts';
 
 /** /new（别名 /reset /clear）— 开始新会话 */
 export function newCommand({ manager }: CommandDeps): CategorizedCommand {
@@ -16,8 +20,14 @@ export function newCommand({ manager }: CommandDeps): CategorizedCommand {
     category: 'agent',
     scope: 'all',
     description: '开始新会话（清空上下文）',
-    handler: (cmdCtx) => {
+    handler: async (cmdCtx) => {
       const { scope, peerId } = getScopePeer(cmdCtx);
+      const forced = (cmdCtx.command?.args ?? []).some((a) => String(a).toLowerCase() === 'force');
+      // 只管私聊：群聊（group:<gid>）不读票、不拦
+      if (scope === 'c2c' && !forced) {
+        const open = openTickets();
+        if (open.length > 0) return renderTicketBlock(open);
+      }
       void manager.remove(scope, peerId);
       return '已开启新会话 ✓';
     },
