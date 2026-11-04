@@ -1,17 +1,20 @@
 /**
  * /tickets — 只读查看 dispatcher 的票（FISH_PATCH tickets）
  *
- * 折叠与渲染都在 ../tickets-view.ts，和 /new 的未结票拦截共用一份实现。
+ * 读数只问 dispatcher 的只读出口（`dispatcher/tickets` 的 payload），本文件不读
+ * 盘、不折事件行；规整与渲染都在 ../tickets-view.ts，和 /new 的未结票拦截共用
+ * 一份实现。出口不在时老实说读不出来，不许拿旧日志顶。
  * 只在 c2c 生效：群聊里 SDK 的 scope 检查会先拦下（回「该指令仅限私聊使用」），
  * handler 里再兜一层，绝不输出票内容、也不报张数。
  */
 import type { SlashCommandHandlerContext, SlashCommandResult } from '@tencent-connect/qqbot-nodejs';
 import type { ImQQBotConfig } from '../config.ts';
 import { chunkMarkdownText } from '../transport/chunker.ts';
-import type { TicketSnapshot } from '../tickets-view.ts';
+import type { TicketSnapshot, TicketsSelection } from '../tickets-view.ts';
 import {
   TICKETS_C2C_ONLY,
   NO_SUCH_TICKET,
+  MAX_ENDED_LISTED,
   foldTickets,
   findTickets,
   renderTicketCandidates,
@@ -26,13 +29,20 @@ const TICKETS_OWNER_OPENID = '64532D871A10E466D163FD001524AD83';
 /** all 的同义写法 */
 const ALL_ALIASES: Set<string> = new Set(['all', 'closed', 'history', '-a', '--all', '全部', '已结束']);
 
-/** 一次读盘：列表和详情都用同一份折叠结果 */
-function readTickets(): TicketSnapshot[] {
-  try {
-    return foldTickets();
-  } catch {
-    return [];
-  }
+/**
+ * 问一次出口，拿到规整后的票。
+ *
+ * selection 原样透给出口：列表要 open、all 要 recentClosed、详情要 id，
+ * 全量前缀搜索就不传。出口没应答（服务没注册 / payload 抛错）直接抛，
+ * 由 handler 兜成一句提示——不拿空表冒充「没有票」。
+ */
+function readTicketsFrom(
+  reader: ((selection?: TicketsSelection) => unknown) | undefined,
+  selection?: TicketsSelection,
+): TicketSnapshot[] {
+  const payload = reader?.(selection) as Parameters<typeof foldTickets>[0];
+  if (!payload) throw new Error('票出口没应答');
+  return foldTickets(payload);
 }
 
 /** 超长行（goal 里没有换行时）按字符硬切，避免整段超过单条上限被 QQ 拒收 */
@@ -68,7 +78,7 @@ async function reply(
 }
 
 /** /tickets — 列票 / 看单张 */
-export function ticketsCommand({ config }: Partial<CommandDeps> = {}): CategorizedCommand {
+export function ticketsCommand({ config, readTickets }: Partial<CommandDeps> = {}): CategorizedCommand {
   return {
     name: 'tickets',
     category: 'qqbot',
@@ -98,18 +108,22 @@ export function ticketsCommand({ config }: Partial<CommandDeps> = {}): Categoriz
         const args = (cmdCtx.command?.args ?? []).map((a) => String(a).trim()).filter(Boolean);
         const target = args[0] ?? '';
         if (!target) {
-          text = renderTicketList(readTickets());
+          text = renderTicketList(readTicketsFrom(readTickets, { open: true }));
         } else if (ALL_ALIASES.has(target.toLowerCase())) {
-          text = renderTicketList(readTickets(), { includeEnded: true });
+          // 未结票 + 最近结束的几张；COUNT 类统计出口自己算，这里只管显示
+          text = renderTicketList(readTicketsFrom(readTickets, { recentClosed: MAX_ENDED_LISTED }), {
+            includeEnded: true,
+          });
         } else {
-          const matches = findTickets(target);
+          // 前缀搜索要看全量（含很早关闭的），出口不给过滤，自己筛
+          const matches = findTickets(target, readTicketsFrom(readTickets));
           if (matches.length === 0) text = NO_SUCH_TICKET;
           else if (matches.length > 1) text = renderTicketCandidates(matches);
           else text = renderTicketDetail(matches[0]!);
         }
       } catch {
         // 任何意外都不许把命令打死
-        text = '票读不出来（tickets.jsonl 打不开或全是坏行）';
+        text = '票读不出来（dispatcher 的票出口没应答）';
       }
       return reply(cmdCtx, text, config);
     },

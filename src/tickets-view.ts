@@ -1,19 +1,19 @@
 /**
  * 票视图公共模块（FISH_PATCH tickets-view）
  *
- * 折叠 `$DSH_HOME/dispatcher/tickets.jsonl` 的地方只此一处：
- *   - commands/session.ts 的 /new 拦截用 openTickets() + renderTicketBlock()
- *   - commands/tickets.ts 的 /tickets 用 foldTickets() + renderTicketList()/renderTicketDetail()
+ * 票状态的唯一来源是 dsh-dispatcher 的只读出口，这里既不读 tickets.jsonl、
+ * 也不折事件行：
+ *   - 进程内：`dispatcher/tickets` 这个 cordis service 的 payload(selection)
+ *   - 跨进程：`dsh-dispatcher tickets --json`，顶层形状与 payload 逐字段相同
+ * 本模块只做三件事：把出口的读数规整成 TicketSnapshot、排序裁剪、渲染成消息。
  *
- * 折叠口径抄 dsh-dispatcher src/store.ts 的 foldEvents：
- * 每票取最后一条 status（首行没有 status 就当 open），owner/at 后者覆盖前者，
- * goal 取第一个非空的，brief 同上（短标签，列表标题行优先用它）；
- * done/dropped 记 closedAt，重新打开则清掉。
- * 读不到文件、坏行、JSON 解析失败、字段缺类型一律安全退化，不抛异常。
+ *   - commands/session.ts 的 /new 拦截用 openTickets(payload) + renderTicketBlock()
+ *   - commands/tickets.ts 的 /tickets 用 foldTickets(payload) + renderTicketList()/renderTicketDetail()
+ *
+ * 出口拿不到读数（服务没注册、payload 抛错）时 foldTickets 给空数组，说话权交给
+ * 调用方：/tickets 说「票读不出来」，/new 当没有未结票放行。
+ * 出口换后端（jsonl → redis）时这里一个字节都不用动。
  */
-import { readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { formatRelativeTime } from './shared/index.ts';
 
 /** 未结状态：open/running/waiting/blocked 算没结，done/dropped 算结束 */
@@ -34,13 +34,50 @@ export const MAX_TICKETS_LISTED = 10;
 /** /tickets all 最多补几张已结束的票 */
 export const MAX_ENDED_LISTED = 5;
 
-/** 票里的一条投递记录（input / report 共用） */
-export interface TicketEntry {
-  id: string;
-  delivered: boolean;
+/**
+ * 选票条件，和出口的 `ReadSelection` 同形。
+ * 只影响返回哪几张票，不影响 counts（出口的 counts 永远按全量算）。
+ */
+export interface TicketsSelection {
+  /** 只看未结票。 */
+  open?: boolean;
+  /** 只看这一张（关了也看得到）。 */
+  id?: string;
+  /** 未结票之外再带最近这么多张已结票；0 = 一张不带。 */
+  recentClosed?: number;
 }
 
-/** 折叠后的一张票 */
+/** 出口单票读数里本模块用到的字段；其余字段原样忽略，缺字段一律安全退化。 */
+export interface TicketRow {
+  id?: unknown;
+  brief?: unknown;
+  goal?: unknown;
+  status?: unknown;
+  owner?: unknown;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+  closedAt?: unknown;
+  pendingInputs?: unknown;
+  pendingReports?: unknown;
+  reportsCount?: unknown;
+}
+
+/** 出口的完整读数：`dispatcher/tickets` 的 payload()，与 CLI --json 同形。 */
+export interface TicketsPayload {
+  /** schema 版本，出口当前是 1。 */
+  v?: number;
+  /** 读数生成时刻（ISO UTC）。 */
+  generatedAt?: string;
+  /** 全量状态计数，不受 tickets 过滤影响。 */
+  counts?: Record<string, number>;
+  /** 本次选中的票。 */
+  tickets?: unknown;
+}
+
+/** 惰性读票函数：每次调用现问出口，服务晚注册也能读到。 */
+export type TicketsPayloadReader = (selection?: TicketsSelection) => TicketsPayload | undefined;
+
+/** 规整后的一张票（渲染用） */
 export interface TicketSnapshot {
   id: string;
   goal: string;
@@ -50,8 +87,12 @@ export interface TicketSnapshot {
   createdAt: string;
   updatedAt: string;
   closedAt?: string;
-  inputs: TicketEntry[];
-  reports: TicketEntry[];
+  /** 还没投递的报告数（出口 pendingReports）。 */
+  pendingReports: number;
+  /** 还排着队的消息数（出口 pendingInputs）。 */
+  pendingInputs: number;
+  /** 这张票全部报告条数，含已读（出口 reportsCount）。 */
+  reportsCount: number;
 }
 
 /** 未结票的精简视图（/new 拦截提示用） */
@@ -60,30 +101,6 @@ export interface OpenTicketSummary {
   status: string;
   brief: string;
   goal: string;
-}
-
-/**
- * tickets.jsonl 里的一行。
- *
- * 字段全部按「可能缺失、可能是别的类型」对待：逐项在运行时校验，
- * 坏行不让整份日志读不出来。
- */
-interface TicketEvent {
-  id?: unknown;
-  at?: unknown;
-  status?: unknown;
-  goal?: unknown;
-  brief?: unknown;
-  owner?: unknown;
-  input?: { id?: unknown } | null;
-  report?: { id?: unknown } | null;
-  delivered?: { kind?: unknown; id?: unknown } | null;
-}
-
-/** 票日志路径：$DSH_HOME/dispatcher/tickets.jsonl，缺省 ~/.dsh */
-export function ticketsFilePath(): string {
-  const home = process.env.DSH_HOME ?? join(homedir(), '.dsh');
-  return join(home, 'dispatcher', 'tickets.jsonl');
 }
 
 /** goal 压成一行，超过 40 字截断 */
@@ -117,96 +134,64 @@ export function clipLongGoal(goal: unknown, limit = 3000): string {
   return chars.length > limit ? `${chars.slice(0, limit).join('')}…（已截断，共 ${chars.length} 字）` : flat;
 }
 
-/**
- * 折叠票日志，返回所有票的快照（含已结束的），按文件里首次出现的顺序。
- * 顺序即创建顺序，和 store.ts 按 createdAt 排序等价；调用方要严格按时间排自己排。
- */
-export function foldTickets(file: string = ticketsFilePath()): TicketSnapshot[] {
-  try {
-    const text = readFileSync(file, 'utf8');
-    const folded = new Map<string, TicketSnapshot>();
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue;
-      let event: unknown;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      if (!event || typeof event !== 'object') continue;
-      const e = event as TicketEvent;
-      if (typeof e.id !== 'string') continue;
-      const id = e.id;
-      let cur = folded.get(id);
-      if (cur === undefined) {
-        cur = {
-          id,
-          goal: '',
-          brief: '',
-          status: 'open',
-          owner: '',
-          createdAt: '',
-          updatedAt: '',
-          closedAt: undefined,
-          inputs: [],
-          reports: [],
-        };
-      }
-      if (typeof e.at === 'string') {
-        if (!cur.createdAt) cur.createdAt = e.at;
-        cur.updatedAt = e.at;
-      }
-      // 首行没有 status 就算 open，之后每条 status 覆盖；只有状态行能挪 closedAt
-      if (typeof e.status === 'string') {
-        cur.status = e.status;
-        cur.closedAt = ENDED_TICKET_STATUS.has(e.status)
-          ? (typeof e.at === 'string' ? e.at : cur.updatedAt)
-          : undefined;
-      }
-      // goal 只在 create 那条里，取第一个非空的
-      if (!cur.goal && typeof e.goal === 'string') cur.goal = e.goal;
-      // brief 同理，且空串/纯空白不算「有」，后面还能被真正的 brief 补上
-      if (!normBrief(cur.brief) && typeof e.brief === 'string') cur.brief = e.brief;
-      if (typeof e.owner === 'string' && e.owner) cur.owner = e.owner;
-      const input = e.input;
-      if (input !== null && typeof input === 'object') {
-        cur.inputs.push({ id: String(input.id ?? ''), delivered: false });
-      }
-      const report = e.report;
-      if (report !== null && typeof report === 'object') {
-        cur.reports.push({ id: String(report.id ?? ''), delivered: false });
-      }
-      const delivery = e.delivered;
-      if (delivery !== null && typeof delivery === 'object') {
-        const bucket = delivery.kind === 'input' ? cur.inputs : delivery.kind === 'report' ? cur.reports : undefined;
-        if (bucket !== undefined) {
-          const hit = bucket.find((entry) => entry.id === delivery.id);
-          if (hit !== undefined) hit.delivered = true;
-        }
-      }
-      folded.set(id, cur);
-    }
-    return [...folded.values()];
-  } catch {
-    return [];
-  }
+/** 非负整数：缺字段、负数、NaN、非数字都退化成 0 */
+function count(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-/** 还没结的票（id / status / brief / 截断后的 goal），顺序与旧实现一致：文件里首次出现的顺序 */
-export function openTickets(): OpenTicketSummary[] {
-  return foldTickets()
+/** 字符串字段：不是字符串就退化成空串 */
+function text(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+/**
+ * 把出口的读数规整成 TicketSnapshot 列表，顺序保持出口给的（createdAt 升序）。
+ *
+ * 这里不做任何状态推导——状态、closedAt、计数全是出口算好的，原样搬。
+ * 读数缺失 / tickets 不是数组 / 单条不是对象 / 缺 id，一律跳过不抛。
+ */
+export function foldTickets(payload: TicketsPayload | undefined): TicketSnapshot[] {
+  const rows = payload?.tickets;
+  if (!Array.isArray(rows)) return [];
+  const out: TicketSnapshot[] = [];
+  for (const raw of rows) {
+    if (raw === null || typeof raw !== 'object') continue;
+    const row = raw as TicketRow;
+    const id = text(row.id);
+    if (!id) continue;
+    const closedAt = text(row.closedAt);
+    out.push({
+      id,
+      goal: text(row.goal),
+      brief: text(row.brief),
+      status: text(row.status) || 'open',
+      owner: text(row.owner),
+      createdAt: text(row.createdAt),
+      updatedAt: text(row.updatedAt),
+      closedAt: closedAt || undefined,
+      pendingReports: count(row.pendingReports),
+      pendingInputs: count(row.pendingInputs),
+      reportsCount: count(row.reportsCount),
+    });
+  }
+  return out;
+}
+
+/** 还没结的票（id / status / brief / 截断后的 goal），顺序跟出口一致 */
+export function openTickets(payload: TicketsPayload | undefined): OpenTicketSummary[] {
+  return foldTickets(payload)
     .filter((t) => OPEN_TICKET_STATUS.has(t.status))
     .map((t) => ({ id: t.id, status: t.status, brief: normBrief(t.brief), goal: clipGoal(t.goal) }));
 }
 
 /** 按票号或前缀找票：先精确匹配，再前缀匹配；多个候选时返回前几个 */
-export function findTickets(query: unknown): TicketSnapshot[] {
+export function findTickets(query: unknown, tickets: TicketSnapshot[]): TicketSnapshot[] {
   const needle = String(query ?? '').trim().toLowerCase();
   if (!needle) return [];
-  const all = foldTickets();
-  const exact = all.filter((t) => t.id.toLowerCase() === needle);
+  const exact = tickets.filter((t) => t.id.toLowerCase() === needle);
   if (exact.length > 0) return exact;
-  return all.filter((t) => t.id.toLowerCase().startsWith(needle));
+  return tickets.filter((t) => t.id.toLowerCase().startsWith(needle));
 }
 
 /** 把未结票拼成 /new 的拦截提示：最多 MAX_LINES 行，固定列 5 张，超出的补一句 */
@@ -227,13 +212,12 @@ export function renderTicketBlock(tickets: Array<{ id: string; status: string; b
 /**
  * 一行描述一张票：id · status · 多久没动 · brief（缺了就 goal 前 40 字，两样都空就少这一段，其余照旧）
  * waiting 不等于交活：waiting 且票里一条报告都没有时状态打问号（waiting?），
- * 主会话一眼看出这张票没人交过活。老票没有 reports 字段按空数组算，别的状态照旧。
+ * 主会话一眼看出这张票没人交过活。
  */
 export function describeTicket(t: TicketSnapshot): string {
   const id = t.id ?? '(无 id)';
   const raw = t.status ?? '未知';
-  const reports = Array.isArray(t.reports) ? t.reports : [];
-  const status = raw === 'waiting' && reports.length === 0 ? 'waiting?' : raw;
+  const status = raw === 'waiting' && t.reportsCount === 0 ? 'waiting?' : raw;
   const parsed = t.updatedAt ? Date.parse(t.updatedAt) : Number.NaN;
   const idle = Number.isNaN(parsed) ? '时间未知' : `${formatRelativeTime(parsed)}没动`;
   const parts = [id, status, idle];
@@ -303,8 +287,6 @@ export function renderTicketList(
 
 /** 单张详情：状态、owner、多久没动、未读报告、排队消息、closedAt、goal 全文 */
 export function renderTicketDetail(t: TicketSnapshot): string {
-  const unreadReports = t.reports.filter((r) => !r.delivered).length;
-  const queuedInputs = t.inputs.filter((i) => !i.delivered).length;
   const idle =
     t.updatedAt && !Number.isNaN(Date.parse(t.updatedAt))
       ? formatRelativeTime(Date.parse(t.updatedAt))
@@ -313,7 +295,7 @@ export function renderTicketDetail(t: TicketSnapshot): string {
     `${t.id} · ${t.status ?? '未知'}`,
     `owner: ${t.owner ? t.owner : '—'}`,
     `最后动静: ${idle}`,
-    `未读报告: ${unreadReports} · 排队消息: ${queuedInputs}`,
+    `未读报告: ${t.pendingReports} · 排队消息: ${t.pendingInputs}`,
   ];
   if (t.closedAt) lines.push(`关闭于: ${formatStamp(t.closedAt)}`);
   if (t.createdAt) lines.push(`创建于: ${formatStamp(t.createdAt)}`);
