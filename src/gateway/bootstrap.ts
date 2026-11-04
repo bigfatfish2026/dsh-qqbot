@@ -22,6 +22,7 @@ import { buildUserAgent } from '../shared/index.ts';
 import type { ImQQBotConfig } from '../config.ts';
 import type { ChatScope, Logger } from '../types.ts';
 import { setupMiddlewares } from './middleware-setup.ts';
+import { createTicketsReader } from './tickets-source.ts';
 import { startMediaCleanup } from '../media/media-cleaner.ts';
 import { ensureVisionInputModal, registerDescribeImageTool } from '../media/vision-tool.ts';
 import { registerSendFileTool, type MediaSenderLike } from '../media/send-file-tool.ts';
@@ -64,7 +65,9 @@ export async function bootstrapGateway(
   logger.info(`QQBot SDK initialized (UA: ${userAgent})`);
 
   // ── 中间件链 ──
-  setupMiddlewares(bot, config, manager, logger);
+  // 票读数只有一条来源：dispatcher 的只读出口 `dispatcher/tickets`（惰性，
+  // 服务晚注册也能读到）。命令层不许自己回去读 tickets.jsonl。
+  setupMiddlewares(bot, config, manager, logger, createTicketsReader(ctx));
 
   // ── 入站：经过中间件链后的消息交给 dsh agent ──
   bot.on('message', async (mCtx: MiddlewareContext) => {
