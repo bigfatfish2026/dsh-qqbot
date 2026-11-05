@@ -20,6 +20,7 @@ import { ApprovalChannel, type ApprovalChannelContext } from '../features/approv
 import { decodeButtonData } from '../features/button-utils.ts';
 import { buildUserAgent } from '../shared/index.ts';
 import type { ImQQBotConfig } from '../config.ts';
+import { providePrefs } from '../model/prefs-readout.ts';
 import type { ChatScope, Logger } from '../types.ts';
 import { setupMiddlewares } from './middleware-setup.ts';
 import { createTicketsReader } from './tickets-source.ts';
@@ -50,6 +51,14 @@ export async function bootstrapGateway(
   logger: Logger,
 ): Promise<void> {
   const manager = new SessionManager(ctx, agents, config, logger);
+
+  // ── 偏好只读出口 ────────────────────────────────────────────────
+  // 别家插件（dsh-timer / dsh-email / dsh-speak-up-qq）不许再自己
+  // readFileSync('~/.dsh-qqbot/model-prefs.json')：文件格式、路径、缓存与并发写
+  // 语义都归本插件，对外只留 `qqbot/prefs` 这一个读口。
+  // 出口拿的是 manager 里那个 PrefsStore 实例，跟 /model、/new 的写者同一份
+  // 内存态——不重读磁盘、不另建缓存，也就不会出现「文件写了、出口还是旧的」。
+  providePrefs(ctx, manager.modelPrefs, (msg) => logger.warn(msg));
 
   // ── 初始化 QQ Bot SDK ──
   const userAgent = buildUserAgent();
