@@ -20,8 +20,13 @@ type DebugFn = (msg: string) => void;
 /** 持久化异常回调（可选，应接 warn 级日志——映射丢失影响会话连续性，需可见） */
 type ErrorFn = (msg: string) => void;
 
-/** 隔离偏好文件结构 */
-interface PrefsFile {
+/**
+ * 偏好文件的三段结构，也是 `qqbot/prefs.payload()` 的对外形状。
+ *
+ * 改字段等于改对外契约：三个插件（dsh-timer / dsh-email / dsh-speak-up-qq）
+ * 按 `sessionIds`、`overrides`、`presets` 三段用。
+ */
+export interface PrefsSnapshot {
   overrides: Record<string, ModelRoute>;
   /** sessionKey → 最新 sessionId（fork 后更新，用于重启后恢复到 fork 后的会话） */
   sessionIds: Record<string, string>;
@@ -55,6 +60,26 @@ export class PrefsStore {
     this.debugLog = debugLog;
     this.onError = options?.onError;
     this.load();
+  }
+
+  /** 偏好文件路径（`qqbot/prefs` 出口的 path() 用）。 */
+  get filePath(): string {
+    return this.prefsPath;
+  }
+
+  /**
+   * 内存态全量快照，深拷贝。
+   *
+   * 只读出口 `qqbot/prefs.payload()` 就是它：调用方拿到的是独立对象，改它不会
+   * 反映到 store、更不会落盘。缓存语义与 store 本身一致——构造时载入一次，
+   * 之后只跟本进程的写操作走，不重读磁盘、没有热重载。
+   */
+  snapshot(): PrefsSnapshot {
+    return {
+      overrides: Object.fromEntries([...this.overrides].map(([key, route]) => [key, { ...route }])),
+      sessionIds: Object.fromEntries(this.sessionIds),
+      presets: Object.fromEntries(this.presets),
+    };
   }
 
   // ── Override 操作 ──
@@ -130,7 +155,7 @@ export class PrefsStore {
     try {
       if (!existsSync(this.prefsPath)) return;
       const content = readFileSync(this.prefsPath, 'utf8');
-      const data = JSON.parse(content) as PrefsFile;
+      const data = JSON.parse(content) as PrefsSnapshot;
       if (data.overrides && typeof data.overrides === 'object') {
         for (const [key, route] of Object.entries(data.overrides)) {
           if (route.provider && route.model) {
@@ -168,7 +193,7 @@ export class PrefsStore {
    * 损坏文件通常只是尾部截断，前面的映射条目往往完好，直接覆盖会把它们一并
    * 丢掉（用户表现为「QQ 里丢上下文」且无从恢复）。备份保留一份人工可救的证据。
    */
-  private readDiskState(): PrefsFile | null {
+  private readDiskState(): PrefsSnapshot | null {
     if (!existsSync(this.prefsPath)) return null;
     let raw: string;
     try {
@@ -177,7 +202,7 @@ export class PrefsStore {
       return null; // 读不到（权限/并发删除）：按首次写处理，不备份
     }
     try {
-      const data = JSON.parse(raw) as PrefsFile;
+      const data = JSON.parse(raw) as PrefsSnapshot;
       if (typeof data !== 'object' || data === null) throw new Error('not an object');
       return data;
     } catch {
@@ -201,7 +226,7 @@ export class PrefsStore {
   }
 
   /** 合并内存与磁盘（内存覆盖同 key，磁盘独有的其他写者条目保留，墓碑 key 除外） */
-  private mergeDisk(disk: PrefsFile | null): PrefsFile {
+  private mergeDisk(disk: PrefsSnapshot | null): PrefsSnapshot {
     const pick = <T>(mem: Map<string, T>, diskMap: Record<string, T> | undefined, tomb: Set<string>): Record<string, T> => {
       const out = Object.fromEntries(mem.entries());
       if (diskMap && typeof diskMap === 'object') {

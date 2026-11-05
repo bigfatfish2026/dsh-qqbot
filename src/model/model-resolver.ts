@@ -26,7 +26,11 @@ interface LlmServiceLike {
 }
 
 export class ModelResolver {
-  private readonly prefs: PrefsStore;
+  /**
+   * 偏好存储。对外只读暴露给 `qqbot/prefs` 出口（PrefsReadout）用——出口必须
+   * 拿这同一个实例，否则 /model、/new 写完文件后出口的内存态还是旧的。
+   */
+  readonly prefs: PrefsStore;
   private readonly settings: SettingsReader;
   private readonly ctx: Context;
   private readonly config: ImQQBotConfig;

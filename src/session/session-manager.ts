@@ -22,6 +22,7 @@ import { resolveAgentCwd } from '../shared/dirs.ts';
 import type { ChatScope, Logger, ReplyTarget } from '../types.ts';
 import type { ImQQBotConfig } from '../config.ts';
 import { ModelResolver } from '../model/model-resolver.ts';
+import type { PrefsStore } from '../model/prefs-store.ts';
 import type { ModelRoute, ModelEntry } from '../model/types.ts';
 import { IdleEvictor } from './idle-evictor.ts';
 import { applyGroupToolAllow, resolveGroupToolAllow } from './group-tools.ts';
@@ -144,6 +145,16 @@ export class SessionManager {
     );
 
     this.registerScopePromptInjection();
+  }
+
+  /**
+   * 偏好存储（与写者同一实例）。
+   *
+   * 只给 `qqbot/prefs` 只读出口用：bootstrap 在造完 manager 后拿它注册 service，
+   * 出口读到的就是 /model、/new 刚写进去的内存态，不用自己重读磁盘。
+   */
+  get modelPrefs(): PrefsStore {
+    return this.modelResolver.prefs;
   }
 
   /**
