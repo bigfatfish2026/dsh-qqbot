@@ -214,6 +214,7 @@ src/
 ├── model/                      # 模型路由层
 │   ├── model-resolver.ts       # 路由解析
 │   ├── prefs-store.ts          # per-peer 偏好持久化
+│   ├── prefs-readout.ts        # qqbot/prefs 只读出口（payload/get/path）
 │   └── settings-reader.ts      # settings.yaml 只读
 ├── features/                   # 交互特性
 │   ├── question-channel.ts     # ask_user_question 问答通道
@@ -238,6 +239,20 @@ src/
 sessionKey: `qqbot:${appId}:${scope}:${peerId}`，新会话铸造 UUID 会话 id 并持久化到 `model-prefs.json`，重启后按持久化 id 恢复；0.5.x 老会话按原派生 id 沿用。
 
 解析策略：进程内复用 → 持久化恢复 → 全新创建。
+
+## 对外接口：`qqbot/prefs`
+
+别的插件要读 per-peer 偏好，只走这个 cordis service，不自己读 `~/.dsh-qqbot/model-prefs.json`：路径、文件格式、缓存和并发写语义都归本插件，对外只留这一个读口。
+
+| 方法 | 返回 |
+|---|---|
+| `payload()` | `overrides` / `sessionIds` / `presets` 三段全量快照，深拷贝；文件读不出来时是空表 |
+| `get(sessionKey)` | 单键：`{ override?, sessionId?, preset? }`，三段都没有就 `undefined` |
+| `path()` | 偏好文件路径，诊断用 |
+
+只读，没有写方法——写仍然走 `/model`、`/new`。出口拿的是本插件那个 `PrefsStore` 实例，跟写者同一份内存态：不重读磁盘、不做热重载，所以不会出现「文件写了、出口还是旧的」。文件不存在或 JSON 损坏时 `PrefsStore` 已经吞掉异常，出口照原样返回空表，不抛错。
+
+在用的有 `dsh-timer`、`dsh-email`、`dsh-speak-up-qq`（都只为认主人的私聊会话）。它们按「服务缺失」做兜底：`ctx.get('qqbot/prefs')` 拿不到就 warn 一次并回退直读文件，这段回退是过渡用的，等接口全覆盖再删。热重载撞名时 `provide` 只 warn 不抛，服务可能短暂不存在，所以兜底必须留着。
 
 ## 设计原则
 
