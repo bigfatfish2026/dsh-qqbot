@@ -105,6 +105,8 @@ export class SessionManager {
    */
   private inflight = new Map<string, Promise<SessionRecord>>();
   private readonly evictor: IdleEvictor;
+  /** 私聊常驻白名单（启动预热也用这份名单，与 evictor 同源） */
+  private readonly keepAlivePeerSet: ReadonlySet<string>;
   private readonly modelResolver: ModelResolver;
   private readonly ctx: Context;
   private readonly host: HostAdapter;
@@ -130,10 +132,11 @@ export class SessionManager {
     this.logger.info(`host adapter capabilities: ${this.host.capabilities.join(', ')}`);
     this.modelResolver = new ModelResolver(ctx, config, logger);
 
+    this.keepAlivePeerSet = new Set(config.sessionKeepAlivePeers ?? []);
     this.evictor = new IdleEvictor(
       this.sessions,
       config.sessionIdleTimeout,
-      new Set(config.sessionKeepAlivePeers ?? []),
+      this.keepAlivePeerSet,
       (key, record) => {
         this.logger.info(`evicting idle session: key=${key}`);
         this.sessions.delete(key);
@@ -781,6 +784,42 @@ export class SessionManager {
 
   get size(): number {
     return this.sessions.size;
+  }
+
+  /** 私聊常驻白名单（启动预热与闲置回收共用） */
+  get keepAlivePeers(): readonly string[] {
+    return [...this.keepAlivePeerSet];
+  }
+
+  /**
+   * 把单个 c2c 私聊会话提前拉进活表（启动预热用）。
+   *
+   * 只走路已有的 getOrCreate/resume 路径：不发消息、不伪造入站事件、不触发 LLM。
+   * 幂等——已在活表的直接返回 'alive'；prefs 里没有映射或盘上确认不存在的不新建
+   * （预热是「复活存量会话」，不是「替用户开新会话」）。
+   *
+   * @returns 'ok' 本次拉入活表；'alive' 本来就在；'no-session' 无 prefs 映射；
+   *          'missing' 盘上确认不存在
+   */
+  async warmupPeer(peerId: string): Promise<'ok' | 'alive' | 'no-session' | 'missing'> {
+    if (!peerId) return 'no-session';
+    const key = this.sessionKey('c2c', peerId);
+    if (this.sessions.has(key)) return 'alive';
+
+    const sessionId = this.modelResolver.getSessionId(key);
+    if (!sessionId) return 'no-session';
+
+    let exists: boolean | undefined;
+    try {
+      exists = await this.host.sessionExists(sessionId);
+    } catch {
+      exists = undefined; // 求证失败交给 getOrCreate 原逻辑（resume 失败再说）
+    }
+    if (exists === false) return 'missing';
+
+    const replyTarget: ReplyTarget = { scope: 'c2c', targetId: peerId };
+    await this.getOrCreate('c2c', peerId, peerId, replyTarget);
+    return this.sessions.has(key) ? 'ok' : 'missing';
   }
 }
 

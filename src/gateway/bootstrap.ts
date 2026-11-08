@@ -8,6 +8,7 @@ import type { Context } from '@deepseek-ai/cordis';
 import { QQBot } from '@tencent-connect/qqbot-nodejs';
 import type { GatewayDisconnect, InteractionEvent, MiddlewareContext } from '@tencent-connect/qqbot-nodejs';
 import { SessionManager, type DshAgentRegistry } from '../session/index.ts';
+import { scheduleWarmup } from '../session/warmup.ts';
 import { handleInbound, createOutboundHandler } from '../transport/index.ts';
 import { parseStreamFrame } from '../transport/events.ts';
 import { ReplyLimiter } from '../transport/reply-limiter.ts';
@@ -181,8 +182,15 @@ export async function bootstrapGateway(
     logger.warn(`qqbot-nodejs SDK 不支持 disconnected 事件（请升级 @tencent-connect/qqbot-nodejs 至 1.0.5+）: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // ── 启动预热：ready 后把 keepAlive 私聊会话提前 resume 进活表 ──
+  // 重启后 sessions 是空表，出站路由 findBySessionId 找不到人，插件开机想主动
+  // 说话会被静默丢弃（见 transport/outbound.ts route()）。预热只拉 agent、不发消息。
+  // ready 可能因重连多次触发：只排一次；定时器在生命周期收尾时清掉。
+  let cancelWarmup: (() => void) | undefined;
   bot.on('ready', () => {
     console.log(`[im-qqbot] Bot ready! appId=${config.appId}`);
+    if (cancelWarmup) return;
+    cancelWarmup = scheduleWarmup(manager, config, logger);
   });
 
   // ── 富媒体过期清理 ──
@@ -207,6 +215,8 @@ export async function bootstrapGateway(
 
       return async () => {
         logger.info('Shutting down');
+        cancelWarmup?.();
+        cancelWarmup = undefined;
         await manager.disposeAll();
         bot.stop();
       };
