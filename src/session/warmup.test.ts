@@ -4,7 +4,7 @@
  * 覆盖：开关、延迟调度与取消、keepAlive 名单 + 最近 c2c 候选收集、
  * 幂等（已在活表跳过）、prefs 无映射跳过、盘上不存在跳过、单条失败不影响其它。
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -104,12 +104,20 @@ function createRegistry(resumeImpl = async ({ resumeSessionId }: { resumeSession
   return registry;
 }
 
+let consoleLog: MockInstance<typeof console.log>;
+let consoleWarn: MockInstance<typeof console.warn>;
+
 beforeEach(() => {
+  // 预热日志双写走 console，测试里静音并留 spy 断言前缀
+  consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+  consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
   env.home = mkdtempSync(join(tmpdir(), 'im-qqbot-warmup-'));
   mkdirSync(join(env.home, 'workspace'), { recursive: true });
 });
 
 afterEach(async () => {
+  consoleLog.mockRestore();
+  consoleWarn.mockRestore();
   await Promise.all(managers.splice(0).map((m) => m.disposeAll()));
   rmSync(env.home, { recursive: true, force: true });
 });
@@ -195,6 +203,17 @@ describe('warmup — 候选与执行', () => {
     expect(outcome.ok).toBe(1);
     expect(manager.getSessionRecord('c2c', OTHER)?.sessionId).toBe('session-good');
     expect(allLogText(logger)).toMatch(/预热 2 条，成功 1，失败 1/);
+  });
+
+  it('日志双写：console.log 带统一前缀 [im-qqbot] warmup:（跟 Bot ready 同通道）', async () => {
+    new PrefsStore().setSessionId(key(PEER), 'session-live');
+    const manager = createManager(createRegistry(), makeConfig({ sessionKeepAlivePeers: [PEER] }));
+
+    await runWarmup(manager, makeConfig({ sessionKeepAlivePeers: [PEER], appId: APP_ID }), createLogger());
+
+    const lines = consoleLog.mock.calls.map((args) => String(args[0]));
+    expect(lines.some((line) => line.startsWith('[im-qqbot] warmup: '))).toBe(true);
+    expect(lines.some((line) => line.includes('预热 1 条，成功 1，失败 0'))).toBe(true);
   });
 
   it('collectWarmupPeers 自身不抛（prefs 快照异常时退回白名单）', () => {
