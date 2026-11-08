@@ -17,6 +17,25 @@ import type { ImQQBotConfig } from '../config.ts';
 import type { Logger } from '../types.ts';
 import type { SessionManager } from './session-manager.ts';
 
+/**
+ * journal 里过滤预热用的统一前缀 —— 与 bootstrap 的「[im-qqbot] Bot ready!」
+ * 走同一个 console 通道。本 profile 下 ctx.logger 没接进 journal，所以预热
+ * 观测必须以 console 这份为准（logger 那份保留给宿主日志，测试也在用）。
+ */
+export const WARMUP_LOG_PREFIX = '[im-qqbot] warmup:';
+
+/** 信息级双写：console.log 进 journal，logger.info 保留 */
+export function warmupInfo(logger: Logger, message: string): void {
+  console.log(`${WARMUP_LOG_PREFIX} ${message}`);
+  logger.info(`warmup: ${message}`);
+}
+
+/** 告警级双写：console.warn 进 journal，logger.warn 保留 */
+export function warmupWarn(logger: Logger, message: string): void {
+  console.warn(`${WARMUP_LOG_PREFIX} ${message}`);
+  logger.warn(`warmup: ${message}`);
+}
+
 /** 单次预热汇总 */
 export interface WarmupOutcome {
   /** 候选条数 */
@@ -112,14 +131,14 @@ export async function runWarmup(
   try {
     peers = collectWarmupPeers(manager, config.appId);
   } catch (err) {
-    logger.warn(`warmup: 收集候选失败，跳过本轮: ${errText(err)}`);
-    logger.info('warmup: 预热 0 条，成功 0，失败 1');
+    warmupWarn(logger, `收集候选失败，跳过本轮: ${errText(err)}`);
+    warmupInfo(logger, '预热 0 条，成功 0，失败 1');
     outcome.failed += 1;
     return outcome;
   }
 
   if (peers.length === 0) {
-    logger.info('warmup: 预热 0 条，成功 0，失败 0（无候选：白名单为空且无 c2c 会话映射）');
+    warmupInfo(logger, '预热 0 条，成功 0，失败 0（无候选：白名单为空且无 c2c 会话映射）');
     return outcome;
   }
 
@@ -129,18 +148,18 @@ export async function runWarmup(
       const result = await manager.warmupPeer(peer);
       if (result === 'ok') {
         outcome.ok += 1;
-        logger.info(`warmup: 已预热 peer=${peer}`);
+        warmupInfo(logger, `已预热 peer=${peer}`);
       } else {
         outcome.skipped += 1;
-        logger.info(`warmup: 跳过 peer=${peer} reason=${result}`);
+        warmupInfo(logger, `跳过 peer=${peer} reason=${result}`);
       }
     } catch (err) {
       outcome.failed += 1;
-      logger.warn(`warmup: 失败 peer=${peer}: ${errText(err)}`);
+      warmupWarn(logger, `失败 peer=${peer}: ${errText(err)}`);
     }
   }
 
-  logger.info(`warmup: 预热 ${outcome.total} 条，成功 ${outcome.ok}，失败 ${outcome.failed}（跳过 ${outcome.skipped}）`);
+  warmupInfo(logger, `预热 ${outcome.total} 条，成功 ${outcome.ok}，失败 ${outcome.failed}（跳过 ${outcome.skipped}）`);
   return outcome;
 }
 
@@ -156,7 +175,7 @@ export function scheduleWarmup(
   logger: Logger,
 ): () => void {
   if (!config.sessionWarmupEnabled) {
-    logger.info('warmup: 已关闭（sessionWarmupEnabled=false），跳过');
+    warmupInfo(logger, '已关闭（sessionWarmupEnabled=false），跳过');
     return () => {};
   }
 
@@ -167,13 +186,13 @@ export function scheduleWarmup(
     if (cancelled) return;
     void runWarmup(manager, config, logger).catch((err: unknown) => {
       // runWarmup 自己吞异常，这里只是兜底，绝不让预热影响主流程
-      logger.warn(`warmup: 未捕获异常: ${errText(err)}`);
+      warmupWarn(logger, `未捕获异常: ${errText(err)}`);
     });
   }, delay);
   // 预热不该拦住进程退出（宿主停服时定时器还在等）
   (timer as { unref?: () => void }).unref?.();
 
-  logger.info(`warmup: 已安排，${delay}ms 后预热 keepAlive 私聊会话`);
+  warmupInfo(logger, `已安排，${delay}ms 后预热 keepAlive 私聊会话`);
 
   return () => {
     cancelled = true;

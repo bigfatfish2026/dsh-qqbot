@@ -25,6 +25,7 @@ import { ModelResolver } from '../model/model-resolver.ts';
 import type { PrefsStore } from '../model/prefs-store.ts';
 import type { ModelRoute, ModelEntry } from '../model/types.ts';
 import { IdleEvictor } from './idle-evictor.ts';
+import { warmupInfo } from './warmup.ts';
 import { applyGroupToolAllow, resolveGroupToolAllow } from './group-tools.ts';
 import type { QuestionChannel } from '../features/question-channel.ts';
 import type { ApprovalChannel } from '../features/approval-channel.ts';
@@ -818,8 +819,11 @@ export class SessionManager {
     if (exists === false) return 'missing';
 
     const replyTarget: ReplyTarget = { scope: 'c2c', targetId: peerId };
+    warmupInfo(this.logger, `peer=${peerId} 开始 resume sessionId=${sessionId}`);
     await this.getOrCreate('c2c', peerId, peerId, replyTarget);
-    return this.sessions.has(key) ? 'ok' : 'missing';
+    const alive = this.sessions.has(key);
+    warmupInfo(this.logger, `peer=${peerId} resume ${alive ? '完成，已进活表' : '未进活表'} sessionId=${sessionId}`);
+    return alive ? 'ok' : 'missing';
   }
 }
 
