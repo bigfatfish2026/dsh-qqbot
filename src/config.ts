@@ -82,6 +82,11 @@ export interface ImQQBotConfig {
   streaming: boolean;
   /** 每会话最大闲置时长(ms)，超时自动回收 */
   sessionIdleTimeout: number;
+  /**
+   * 私聊常驻白名单：列在这里的 c2c 用户 openid 不参与闲置回收，
+   * 空数组 = 不豁免（保持原行为）；群聊不受此配置影响
+   */
+  sessionKeepAlivePeers: string[];
   /** 并发队列最大长度 */
   maxQueue: number;
   /** 处理超时(ms)，超时中断当前 LLM 调用 */
@@ -126,6 +131,7 @@ export const ConfigSchema: Schema<ImQQBotConfig> = Schema.object({
   textChunkLimit: Schema.number().default(4500).description('单条消息最大字符数'),
   streaming: Schema.boolean().default(true).description('是否启用流式输出（群聊始终不启用）'),
   sessionIdleTimeout: Schema.number().default(30 * 60 * 1000).description('会话闲置超时(ms)'),
+  sessionKeepAlivePeers: Schema.array(Schema.string()).default([]).description('私聊常驻白名单（c2c openid，不参与闲置回收；空=不豁免）'),
   maxQueue: Schema.number().default(20).description('并发队列最大长度'),
   processingTimeoutMs: Schema.number().default(30 * 60 * 1000).description('处理超时(ms)，超时中断当前 LLM 调用'),
   askTimeoutMs: Schema.number().default(5 * 60 * 1000).description('待答问题超时(ms)，超时自动拒绝并提示'),

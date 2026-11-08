@@ -133,6 +133,7 @@ export class SessionManager {
     this.evictor = new IdleEvictor(
       this.sessions,
       config.sessionIdleTimeout,
+      new Set(config.sessionKeepAlivePeers ?? []),
       (key, record) => {
         this.logger.info(`evicting idle session: key=${key}`);
         this.sessions.delete(key);
