@@ -25,6 +25,7 @@ import { ModelResolver } from '../model/model-resolver.ts';
 import type { PrefsStore } from '../model/prefs-store.ts';
 import type { ModelRoute, ModelEntry } from '../model/types.ts';
 import { IdleEvictor } from './idle-evictor.ts';
+import { createTickDriver, type TickDriver } from '../shared/tick-driver.ts';
 import { warmupInfo } from './warmup.ts';
 import { applyGroupToolAllow, resolveGroupToolAllow } from './group-tools.ts';
 import type { QuestionChannel } from '../features/question-channel.ts';
@@ -95,6 +96,13 @@ export function latestCompletedPrefixBoundary(events: readonly unknown[]): numbe
   return boundary;
 }
 
+/** 闲置回收的 topic：dsh-timer 的 schedule 规则往这发 tick。 */
+export const IDLE_EVICT_TOPIC = 'qqbot.session.evict.tick';
+/** 规则 id：schedule.register 里全局唯一。 */
+export const IDLE_EVICT_RULE_ID = 'qqbot.session.evict';
+/** 闲置回收周期（毫秒），与迁移前的 setInterval 一致。 */
+const IDLE_EVICT_INTERVAL_MS = 60_000;
+
 export class SessionManager {
   private sessions = new Map<string, SessionRecord>();
   /**
@@ -106,6 +114,8 @@ export class SessionManager {
    */
   private inflight = new Map<string, Promise<SessionRecord>>();
   private readonly evictor: IdleEvictor;
+  /** 闲置回收的驱动源：tick 优先，schedule 不在就回落自己的 interval。 */
+  private readonly evictDriver: TickDriver | undefined;
   /** 私聊常驻白名单（启动预热也用这份名单，与 evictor 同源） */
   private readonly keepAlivePeerSet: ReadonlySet<string>;
   private readonly modelResolver: ModelResolver;
@@ -148,6 +158,20 @@ export class SessionManager {
         this.approvalChannel?.cancelPending(key);
       },
     );
+
+    // 只换驱动源：阈值、豁免名单、回收动作全在 evictor 里原样不动。
+    if (config.sessionIdleTimeout > 0) {
+      this.evictDriver = createTickDriver({
+        ctx,
+        topic: IDLE_EVICT_TOPIC,
+        ruleId: IDLE_EVICT_RULE_ID,
+        every: IDLE_EVICT_INTERVAL_MS,
+        run: () => this.evictor.check(),
+        logger,
+        label: 'im-qqbot: idle-evict',
+      });
+      this.evictDriver.start();
+    }
 
     this.registerScopePromptInjection();
   }
@@ -773,6 +797,7 @@ export class SessionManager {
   }
 
   async disposeAll(): Promise<void> {
+    this.evictDriver?.stop();
     this.evictor.dispose();
     const records = [...this.sessions.values()];
     this.sessions.clear();
