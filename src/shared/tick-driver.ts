@@ -115,6 +115,20 @@ const STALL_FACTOR = 3;
 const MIN_RETRY_MS = 60_000;
 const RETRY_FACTOR = 30;
 
+/**
+ * 「没有 schedule」分三种原因说，别都写成「dsh-timer 未挂」把排障带错方向：
+ * 尚未就绪 / 已就绪但本插件没拿到句柄 / 规则被撤。文案跟其它插件逐字一致。
+ */
+export const SCHEDULE_ABSENT = Object.freeze({
+  notReady: 'schedule 服务尚未就绪（dsh-timer 未挂或还没 apply）',
+  noHandle: 'schedule 服务已就绪过，但本插件没拿到句柄（inject/ctx.get 未生效，或服务正在重载）',
+  ruleRevoked: 'schedule 规则被撤（曾注册成功，现不在规则表里）',
+});
+
+function scheduleAbsentReason(seenInstance: boolean): string {
+  return seenInstance ? SCHEDULE_ABSENT.noHandle : SCHEDULE_ABSENT.notReady;
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -388,7 +402,7 @@ export function createTickDriver(options: TickDriverOptions): TickDriver {
       if (!scheduleAbsentAnnounced) {
         scheduleAbsentAnnounced = true;
         logger.info(
-          `${label}: 没有 schedule 服务，当前由自己的 ${every}ms 定时器驱动，等服务出现再切 ${topic}`,
+          `${label}: ${scheduleAbsentReason(scheduleSeen !== undefined)}，当前由自己的 ${every}ms 定时器驱动，等服务出现再切 ${topic}`,
         );
       }
       return;
@@ -407,6 +421,13 @@ export function createTickDriver(options: TickDriverOptions): TickDriver {
 
     if (mode === 'tick' && ruleRegistered) return;
     if (now() < retryAt) return;
+
+    if (mode === 'tick') {
+      // 已经在 tick 模式但规则丢了（比如被谁 unregister 掉）：重挂，不换源。
+      logger.info(`${label}: ${SCHEDULE_ABSENT.ruleRevoked}，重挂规则 ${ruleId}`);
+      registerRule(scheduleService);
+      return;
+    }
 
     if (registerRule(scheduleService)) switchToTick();
   }

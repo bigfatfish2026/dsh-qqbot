@@ -313,7 +313,7 @@ describe('tick driver：降级路径', () => {
 
     expect(driver.mode()).toBe('interval');
     expect(schedule.registerCalls).toBe(0);
-    expect(infos.join('\n')).toContain('没有 schedule 服务');
+    expect(infos.join('\n')).toContain('schedule 服务尚未就绪');
 
     const interval = clock.handles.find((handle) => handle.ms === EVERY);
     expect(interval?.unrefCalls).toBe(1);
@@ -366,6 +366,32 @@ describe('tick driver：降级路径', () => {
     expect(driver.mode()).toBe('interval');
     expect(driver.status().intervalActive).toBe(true);
     expect(warns.join('\n')).toContain('schedule 服务不在了');
+  });
+
+  it('schedule 消失后仍拿不到句柄：说「已就绪过，没拿到句柄」', () => {
+    const { h, driver, infos } = setup();
+    expect(driver.mode()).toBe('tick');
+
+    h.services.delete('schedule');
+    driver.reconcile();
+    driver.reconcile();
+
+    expect(infos.join('\n')).toContain('schedule 服务已就绪过，但本插件没拿到句柄');
+  });
+
+  it('tick 模式规则丢了：按「规则被撤」措辞重挂，不换源', () => {
+    const { h, events, driver, infos } = setup();
+    expect(driver.mode()).toBe('tick');
+
+    const next = fakeSchedule(events);
+    h.services.set('schedule', next.service as unknown as TickScheduleService);
+    driver.reconcile();
+
+    expect(infos.join('\n')).toContain(
+      `schedule 规则被撤（曾注册成功，现不在规则表里），重挂规则 ${RULE_ID}`,
+    );
+    expect(next.rules.has(RULE_ID)).toBe(true);
+    expect(driver.mode()).toBe('tick');
   });
 
   it('internal/service 就绪：重新注册并切回 tick', () => {
