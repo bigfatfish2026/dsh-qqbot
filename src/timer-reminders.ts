@@ -7,27 +7,32 @@
  * 和 /tickets 的差别只在读数来源：票有 dispatcher 的只读出口，提醒没有出口，
  * 由 gateway/reminders-source.ts 只读打开那个库文件拿行。库表结构归 dsh-timer
  * （lib/remind.js 的 REMINDER_TABLE），这里只认列名，不改语义。
+ *
+ * 输出格式（2026-11 改版）：一行一条，只留
+ *   emoji + 相对日期 + HH:MM + 正文全文
+ * id、目标 openid、状态文字、失败次数、最后错误一律不上屏；正文不截断。
+ * 失败行靠 ⚠️ 区分，不再写「失败」二字。长文本切块发送归 commands/reminders.ts。
  */
 import type { SlashCommandHandlerContext } from '@tencent-connect/qqbot-nodejs';
 
 /** dsh-timer 的提醒表名，和 plugins/dsh-timer/lib/remind.js 的 REMINDER_TABLE 同一个 */
 export const REMINDER_TABLE = 'dsh_timer_reminder';
 
-/** 正文截断长度：提醒正文可能很长，列出来只留前这么多字 */
-export const MAX_TEXT_CHARS = 60;
-
-/** 失败原因截断长度 */
-const MAX_ERROR_CHARS = 80;
-
 /** 列表最多列几条，超了给一句「还有 n 条」 */
 export const MAX_REMINDERS_LISTED = 20;
 
-/** 状态标签，和 dsh-timer 的 timer_remind_list 工具同一套说法 */
-export const REMINDER_STATE_LABEL: Record<string, string> = {
-  pending: '待发',
-  sending: '发送中',
-  failed: '失败',
+/** 每行一个 emoji，按状态给：待发 ⏰、发送中 ⏳、失败 ⚠️；认不出的状态给 🔔 */
+export const REMINDER_STATE_EMOJI: Record<string, string> = {
+  pending: '⏰',
+  sending: '⏳',
+  failed: '⚠️',
 };
+
+/** 未知状态的兜底 emoji（一条消息里 emoji 也就标题一个 + 每行一个，不撒） */
+const FALLBACK_EMOJI = '🔔';
+
+/** 标题行 emoji */
+const TITLE_EMOJI = '📋';
 
 /** 没有提醒时回这一句 */
 export const NO_REMINDERS = '没有提醒';
@@ -65,29 +70,77 @@ export interface ReminderItem {
 /** 惰性读提醒函数：每次调用现读库，undefined = 读不出来（区别于空数组 = 没有提醒） */
 export type RemindersReader = () => ReminderRow[] | undefined;
 
-/** 按字符（不是 UTF-16 码元）截断，超了补省略号 */
-function clip(text: string, limit: number): string {
-  const chars = [...text];
-  if (chars.length <= limit) return text;
-  return `${chars.slice(0, limit).join('')}…`;
+/** 本机时区的星期名，索引就是 Date#getDay()：0 = 周日 */
+const WEEKDAY_NAMES = ['日', '一', '二', '三', '四', '五', '六'] as const;
+
+/** 一天毫秒数，只用来算日历日差（本地时区，中国无夏令时，round 兜住 23/25 小时的一天） */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 把时刻抹平成本地当天 00:00，只留日历日 */
+function startOfLocalDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
-/** 本地时区的「YYYY-MM-DD HH:mm」；坏时间原样返回，不抛 */
-export function clock(isoText: string): string {
-  const d = new Date(isoText);
-  if (!Number.isFinite(d.getTime())) return isoText;
+/** 这一天的本地周一 00:00 毫秒数（周一起算，和「下周X」的说法对齐） */
+function startOfLocalWeek(d: Date): number {
+  const day = startOfLocalDay(d);
+  const backToMonday = (d.getDay() + 6) % 7;
+  return day - backToMonday * DAY_MS;
+}
+
+/**
+ * 从 from 到 to 差几个本地日历日（今天 = 0，明天 = 1，昨天 = -1）。
+ * 纯函数，只看本机时区的年月日，不看时分秒。
+ */
+export function calendarDayDiff(from: Date, to: Date): number {
+  return Math.round((startOfLocalDay(to) - startOfLocalDay(from)) / DAY_MS);
+}
+
+/** 「X月X日」，本机时区，不带年份（超过一周才用） */
+function monthDay(d: Date): string {
+  return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+
+/**
+ * 相对日期词，纯函数：
+ *   今天 / 明天 / 后天   —— 日历日差 0 / 1 / 2
+ *   本周X / 下周X        —— 差 3~7 天，同一周给「本周X」，跨到下一周给「下周X」
+ *    X月X日             —— 超过一周，以及已经过去的日子（含本周已过的那天）
+ * X 是本机时区的周几。周一切周。
+ */
+export function relativeDayLabel(due: Date, now: Date = new Date()): string {
+  const diff = calendarDayDiff(now, due);
+  if (diff === 0) return '今天';
+  if (diff === 1) return '明天';
+  if (diff === 2) return '后天';
+  if (diff > 2 && diff <= 7) {
+    const prefix = startOfLocalWeek(due) === startOfLocalWeek(now) ? '本周' : '下周';
+    return `${prefix}${WEEKDAY_NAMES[due.getDay()]}`;
+  }
+  return monthDay(due);
+}
+
+/** HH:MM，24 小时制，本机时区，两位补零 */
+export function formatClock(d: Date): string {
   const pad = (n: number): string => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 目标缩写：c2c:00000000…ABCD，只留够认人的头尾 */
-export function shortTarget(target: string): string {
-  const m = /^(c2c|group):(.+)$/.exec(target);
-  if (!m) return target;
-  const [, kind, id] = m;
-  const tail = id!.length > 4 ? id!.slice(-4) : id!;
-  const head = id!.length > 8 ? `${id!.slice(0, 8)}…` : '';
-  return `${kind}:${head}${tail}`;
+/**
+ * 一行的日期时段：「明天 09:30」。
+ * 坏时刻（不是合法 ISO / 空串）原样吐出来，不抛、不猜。
+ */
+export function formatDueWhen(dueAt: string, now: Date = new Date()): string {
+  const d = new Date(dueAt);
+  if (!Number.isFinite(d.getTime())) return dueAt || '—';
+  return `${relativeDayLabel(d, now)} ${formatClock(d)}`;
+}
+
+/** 一行：emoji + 日期 + 时间 + 正文全文（正文不截断，原样保留） */
+export function formatReminderLine(item: ReminderItem, now: Date = new Date()): string {
+  const emoji = REMINDER_STATE_EMOJI[item.state] ?? FALLBACK_EMOJI;
+  const body = item.text.trim();
+  return `${emoji} ${formatDueWhen(item.dueAt, now)}${body ? ` ${body}` : ''}`;
 }
 
 /** 把出口读数规整成 ReminderItem[]；不是数组、缺字段一律安全退化 */
@@ -116,32 +169,15 @@ export function foldReminders(payload: unknown): ReminderItem[] {
   return out;
 }
 
-/** 渲染一行的第一段：id · 时刻 · 状态 → 目标 */
-function renderHead(item: ReminderItem): string {
-  const label = REMINDER_STATE_LABEL[item.state] ?? (item.state || '未知');
-  const extra = item.state === 'failed' && item.attempts > 0 ? `（${item.attempts} 次）` : '';
-  const at = item.dueAt ? clock(item.dueAt) : '—';
-  return `${item.id} · ${at} · ${label}${extra} → ${shortTarget(item.target)}`;
-}
-
 /**
- * 渲染整张表。
- * 空表给 NO_REMINDERS；有条目先报总数（待发 / 失败分项），再逐条列。
+ * 渲染整张表：标题一行（条数，不带括注），然后一行一条。
+ * 空表给 NO_REMINDERS。now 可注入，测试用；线上走默认当前时刻。
  */
-export function renderReminders(items: ReminderItem[]): string {
+export function renderReminders(items: ReminderItem[], now: Date = new Date()): string {
   if (items.length === 0) return NO_REMINDERS;
-  const pending = items.filter((i) => i.state === 'pending').length;
-  const failed = items.filter((i) => i.state === 'failed').length;
-  const parts = [`待发 ${pending}`];
-  if (failed > 0) parts.push(`失败 ${failed}`);
-  const others = items.length - pending - failed;
-  if (others > 0) parts.push(`其他 ${others}`);
-
-  const lines: string[] = [`📋 提醒 ${items.length} 条（${parts.join(' · ')}）`];
+  const lines: string[] = [`${TITLE_EMOJI} 提醒 ${items.length} 条`];
   for (const item of items.slice(0, MAX_REMINDERS_LISTED)) {
-    lines.push(renderHead(item));
-    lines.push(`  ${clip(item.text, MAX_TEXT_CHARS)}`);
-    if (item.lastError) lines.push(`  最后错误：${clip(item.lastError, MAX_ERROR_CHARS)}`);
+    lines.push(formatReminderLine(item, now));
   }
   if (items.length > MAX_REMINDERS_LISTED) {
     lines.push(`…还有 ${items.length - MAX_REMINDERS_LISTED} 条没列`);

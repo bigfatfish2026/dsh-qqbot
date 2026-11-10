@@ -74,7 +74,7 @@ describe('/reminders handler', () => {
     expect(await cmd.handler(makeCtx())).toBe(REMINDERS_UNREADABLE);
   });
 
-  it('待发 + 失败都列出来，含 id/时间/状态/目标/正文', async () => {
+  it('待发 + 失败都列出来：一行一条 emoji + 日期 + 时间 + 正文', async () => {
     const cmd = remindersCommand({
       readReminders: () => [
         row(),
@@ -82,14 +82,18 @@ describe('/reminders handler', () => {
       ],
     });
     const out = (await cmd.handler(makeCtx())) as string;
-    expect(out).toContain('提醒 2 条');
-    expect(out).toContain('rem_a');
-    expect(out).toContain('待发');
-    expect(out).toContain('rem_b');
-    expect(out).toContain('失败（4 次）');
-    expect(out).toContain('c2c:00000000…ABCD');
-    expect(out).toContain('换 key');
-    expect(out).toContain('审计设计稿');
+    const lines = out.split('\n');
+    expect(lines[0]).toBe('📋 提醒 2 条');
+    expect(lines).toHaveLength(3);
+    // 待发表不带状态字、id、目标；只留 emoji + 日期 + HH:MM + 正文
+    expect(lines[1]).toMatch(/^⏰ \S+ \d{2}:\d{2} 换 key$/);
+    // 失败行用 ⚠️ 区分
+    expect(lines[2]).toMatch(/^⚠️ \S+ \d{2}:\d{2} 审计设计稿$/);
+    expect(out).not.toContain('rem_a');
+    expect(out).not.toContain('rem_b');
+    expect(out).not.toContain('c2c:');
+    expect(out).not.toContain('待发');
+    expect(out).not.toContain('失败');
   });
 
   it('群聊一个字都不吐', async () => {
@@ -98,13 +102,24 @@ describe('/reminders handler', () => {
   });
 
   it('超长列表按 textChunkLimit 切块发', async () => {
-    const many = Array.from({ length: 20 }, (_, i) => row({ id: `rem_${i}`, text: '字'.repeat(60) }));
+    const many = Array.from({ length: 20 }, (_, i) => row({ id: `rem_${i}`, text: '字'.repeat(200) }));
     const ctx = makeCtx();
     const cmd = remindersCommand({ readReminders: () => many, config: { textChunkLimit: 300 } as never });
     const out = await cmd.handler(ctx);
     expect(out).toEqual({ kind: 'noop' });
     const send = (ctx as unknown as { bot: { sendMarkdown: ReturnType<typeof vi.fn> } }).bot.sendMarkdown;
     expect(send.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('单条超长正文也不截断，整条走切块发', async () => {
+    const long = '长'.repeat(2000);
+    const ctx = makeCtx();
+    const cmd = remindersCommand({ readReminders: () => [row({ text: long })], config: { textChunkLimit: 300 } as never });
+    expect(await cmd.handler(ctx)).toEqual({ kind: 'noop' });
+    const send = (ctx as unknown as { bot: { sendMarkdown: ReturnType<typeof vi.fn> } }).bot.sendMarkdown;
+    const sent = send.mock.calls.map((c) => String(c[1] ?? '')).join('');
+    expect(sent).toContain(long);
+    expect(sent).not.toContain('…');
   });
 });
 
