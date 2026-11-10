@@ -8,6 +8,7 @@ import type { SessionManager } from '../session/index.ts';
 import type { ImQQBotConfig } from '../config.ts';
 import type { Logger } from '../types.ts';
 import type { TicketsPayloadReader } from '../tickets-view.ts';
+import type { RemindersReader } from '../timer-reminders.ts';
 
 export interface CommandDeps {
   manager: SessionManager;
@@ -19,6 +20,11 @@ export interface CommandDeps {
    * 命令层自己决定怎么说，不许自己回去读 tickets.jsonl。
    */
   readTickets?: TicketsPayloadReader;
+  /**
+   * 惰性读提醒：只读 dsh-timer 的 sqlite（`dsh_timer_reminder`）。
+   * 每次调用现读，返回 undefined = 读不出来，空数组 = 没有提醒。
+   */
+  readReminders?: RemindersReader;
 }
 
 /** 命令分类：agent = 底层 agent 通用能力，qqbot = 插件特有 */
