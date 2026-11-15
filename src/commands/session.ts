@@ -8,7 +8,7 @@
  */
 import type { CommandDeps, CategorizedCommand } from './types.ts';
 import { getScopePeer } from '../shared/index.ts';
-// 折叠 / 截断 / 渲染都挪到 ../tickets-view.ts，/new 和 /tickets 共用一份（LOCAL_PATCH tickets-view）
+// 折叠 / 截断 / 渲染都挪到 ../tickets-view.ts，/new 和 /tickets 共用一份
 // 读数只问 dispatcher 的只读出口，不再自己读 tickets.jsonl。
 import { openTickets, renderTicketBlock } from '../tickets-view.ts';
 

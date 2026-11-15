@@ -6,6 +6,21 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)。
 
+## [0.6.0] - 2026-11-10
+
+### 新功能
+
+- **`/tickets` 只读票列表**：私聊查看 dispatcher 的未结票 / 全部票 / 单张详情，读数只走 `dispatcher/tickets` 只读出口，不自己读盘；群聊里完全不响应。
+- **`/reminders` 只读提醒列表**：私聊列 `dsh-timer` 里所有一次性提醒（待发 + 失败），一行一条，日期用「今天/明天/本周X」这类相对说法；库路径可用 `DSH_TIMER_DB` 覆盖。
+- **群聊工具白名单 `groupToolAllow`**：非空时群会话只保留白名单内的工具，fail-closed。
+- **私聊常驻 `sessionKeepAlivePeers`**：名单内的私聊会话不参与闲置回收，可配启动预热把会话提前 resume 进活表。
+- **`qqbot/prefs` 只读出口**：其他插件读 per-peer 偏好统一走这个 cordis service，不再各自读文件。
+
+### 变更
+
+- `/tickets`、`/reminders` 的鉴权名单改为配置项 `ownerOpenid` / 环境变量 `QQBOT_OWNER_OPENID`，代码里不再硬编码任何 openid。
+- 闲置回收与媒体清理定时器迁到 `dsh-timer` 的 schedule tick。
+
 ## [0.5.5] - 2026-10-30
 
 ### 问题修复

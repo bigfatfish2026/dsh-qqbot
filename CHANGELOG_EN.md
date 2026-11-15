@@ -6,6 +6,21 @@ This file records significant dsh-qqbot updates from a product perspective, focu
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.6.0] - 2026-11-10
+
+### Added
+
+- **`/tickets`**: read-only ticket listing in private chat (open tickets, all tickets, single ticket detail); reads only through the `dispatcher/tickets` read-only port and stays silent in groups.
+- **`/reminders`**: read-only reminder listing in private chat (pending + failed) from `dsh-timer`'s sqlite; the DB path is overridable via `DSH_TIMER_DB`.
+- **`groupToolAllow`**: per-group tool allowlist, fail-closed when non-empty.
+- **`sessionKeepAlivePeers`**: keep-listed private sessions out of idle eviction, with optional startup warmup.
+- **`qqbot/prefs`**: read-only cordis service so other plugins read per-peer preferences through one port.
+
+### Changed
+
+- `/tickets` and `/reminders` authorization now comes from the `ownerOpenid` config value or the `QQBOT_OWNER_OPENID` env var; no openid is hardcoded.
+- Idle eviction and media cleanup timers moved to `dsh-timer` schedule ticks.
+
 ## [0.5.5] - 2026-10-30
 
 ### Fixed

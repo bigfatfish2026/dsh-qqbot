@@ -57,16 +57,26 @@ function seed(rows: Array<Record<string, unknown>> = []): void {
 }
 
 describe('resolveTimerDbPath', () => {
-  it('默认落在 dsh-timer 的 stateDbPath', () => {
-    expect(resolveTimerDbPath({})).toMatch(/dsh-timer[\\/]timer[\\/]timer\.db$/);
+  it('默认落在插件数据目录 ~/.dsh-timer/timer.db', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-home-'));
+    try {
+      expect(resolveTimerDbPath({}, home)).toBe(join(home, '.dsh-timer', 'timer.db'));
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it('环境变量能覆盖', () => {
-    expect(resolveTimerDbPath({ [TIMER_DB_ENV]: '/tmp/other.db' })).toBe('/tmp/other.db');
+    expect(resolveTimerDbPath({ [TIMER_DB_ENV]: '/tmp/other.db' }, '/nonexistent')).toBe('/tmp/other.db');
   });
 
   it('环境变量是空白就回默认', () => {
-    expect(resolveTimerDbPath({ [TIMER_DB_ENV]: '   ' })).toMatch(/timer\.db$/);
+    const home = mkdtempSync(join(tmpdir(), 'dsh-home-'));
+    try {
+      expect(resolveTimerDbPath({ [TIMER_DB_ENV]: '   ' }, home)).toMatch(/timer\.db$/);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 

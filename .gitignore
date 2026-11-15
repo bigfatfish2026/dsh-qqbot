@@ -6,6 +6,12 @@ docs/
 *.tsbuildinfo
 cordis.dev.yml
 
+# 运行期数据：日志与 sqlite（提醒库等）不入库
+*.log
+*.db
+*.db-wal
+*.db-shm
+
 # lib/ 构建产物入库（GitHub 安装开箱即用），但排除类型与 sourcemap
 lib/**/*.d.ts
 lib/**/*.map

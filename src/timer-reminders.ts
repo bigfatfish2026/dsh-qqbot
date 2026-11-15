@@ -1,8 +1,9 @@
 /**
- * 提醒视图公共模块（LOCAL_PATCH reminders-view）
+ * 提醒视图公共模块
  *
- * 读数唯一来源是 dsh-timer 自己的 sqlite（默认 ~/.dsh-timer/timer.db 的
- * dsh_timer_reminder 表）。本模块不建表、不缓存、不写：/reminders 每次现读现渲染。
+ * 读数唯一来源是 dsh-timer 自己的 sqlite（默认 ~/.dsh-timer/timer.db，
+ * 可用 DSH_TIMER_DB 覆盖，见 gateway/reminders-source.ts 的 dsh_timer_reminder 表）。
+ * 本模块不建表、不缓存、不写：/reminders 每次现读现渲染。
  *
  * 和 /tickets 的差别只在读数来源：票有 dispatcher 的只读出口，提醒没有出口，
  * 由 gateway/reminders-source.ts 只读打开那个库文件拿行。库表结构归 dsh-timer
@@ -40,7 +41,7 @@ export const NO_REMINDERS = '没有提醒';
 /** 读不出来时回这一句（库不在 / 表没建 / 打开失败，都不许拿空表冒充「没有提醒」） */
 export const REMINDERS_UNREADABLE = '提醒读不出来（没找到 dsh-timer 的提醒库）';
 
-/** 群聊里的统一回复：提醒正文与 target 都是所有者的私事，群里一个字都不吐 */
+/** 群聊里的统一回复：提醒正文与 target 都是 owner 的私事，群里一个字都不吐 */
 export const REMINDERS_C2C_ONLY = '该指令仅限私聊使用';
 
 /** 出口给的一行（字段全部未知类型，规整时安全退化） */

@@ -1,7 +1,7 @@
 /**
  * /reminders — 列所有一次性提醒（待发和发送失败都列）
  *
- * 和 /tickets 同一套规矩：只在私聊、只认所有者的 openid，陌生人完全安静
+ * 和 /tickets 同一套规矩：只在私聊、只认 owner 的 openid，陌生人完全安静
  * （authorized 返回空串，SDK 判空就不发）。读数来自 dsh-timer 的 sqlite
  * （见 ../gateway/reminders-source.ts），不另建表、不缓存。
  *
@@ -42,7 +42,7 @@ export function remindersCommand({ config, readReminders }: Partial<CommandDeps>
     scope: 'c2c',
     // 白名单同 /tickets：authorized 返回非 true 时中间件把返回值当提示发出去，
     // 这里给空串 = 陌生人什么都收不到，同时消息不进 agent。
-    authorized: (cmdCtx) => (isOwner(cmdCtx.message?.senderId) ? true : ''),
+    authorized: (cmdCtx) => (isOwner(cmdCtx.message?.senderId, config?.ownerOpenid) ? true : ''),
     description: '查看所有提醒（待发 + 失败）',
     usage: [
       '/reminders',

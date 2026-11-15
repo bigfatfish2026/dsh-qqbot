@@ -102,6 +102,11 @@ export interface ImQQBotConfig {
   askTimeoutMs: number;
   /** 群历史缓冲条数 */
   historyLimit: number;
+  /**
+   * 只读命令（/tickets、/reminders）的 owner openid 名单，逗号分隔可写多个；
+   * 留空则回退环境变量 QQBOT_OWNER_OPENID，两边都空 = 没人能用这两条命令
+   */
+  ownerOpenid: string;
   /** 访问控制 */
   access: AccessControlConfig;
   /** 是否展示工具调用成功结果（工具错误始终展示） */
@@ -145,6 +150,7 @@ export const ConfigSchema: Schema<ImQQBotConfig> = Schema.object({
   processingTimeoutMs: Schema.number().default(30 * 60 * 1000).description('处理超时(ms)，超时中断当前 LLM 调用'),
   askTimeoutMs: Schema.number().default(5 * 60 * 1000).description('待答问题超时(ms)，超时自动拒绝并提示'),
   historyLimit: Schema.number().default(10).description('群历史缓冲条数'),
+  ownerOpenid: Schema.string().default('').description('只读命令（/tickets、/reminders）的 owner openid，逗号分隔；空=回退 QQBOT_OWNER_OPENID'),
   access: AccessControlSchema.default({
     c2cMode: 'open',
     c2cAllow: [],

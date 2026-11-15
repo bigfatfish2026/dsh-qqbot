@@ -5,7 +5,7 @@ import { buildCommandList } from './index.ts';
 import { NO_REMINDERS, REMINDERS_C2C_ONLY, REMINDERS_UNREADABLE } from '../timer-reminders.ts';
 import type { SlashCommandHandlerContext } from '@tencent-connect/qqbot-nodejs';
 
-const OWNER = '0000000000000000000000000000ABCD';
+const OWNER = 'test-owner-openid-0001';
 
 function makeCtx(senderId = OWNER, kind: 'c2c' | 'group' = 'c2c', groupOpenid?: string): SlashCommandHandlerContext {
   return {
@@ -19,34 +19,45 @@ const row = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   id: 'rem_a',
   dueAt: '2026-11-10T10:00:00.000Z',
   text: '换 key',
-  target: 'c2c:0000000000000000000000000000ABCD',
+  target: 'c2c:test-owner-openid-0001',
   state: 'pending',
   attempts: 0,
   ...over,
 });
 
 describe('isOwner', () => {
-  it('认得所有者，大小写不敏感', () => {
-    expect(isOwner(OWNER)).toBe(true);
-    expect(isOwner(OWNER.toLowerCase())).toBe(true);
+  it('认名单里的 openid，大小写不敏感', () => {
+    expect(isOwner(OWNER, OWNER)).toBe(true);
+    expect(isOwner(OWNER.toLowerCase(), [OWNER])).toBe(true);
   });
 
   it('缺身份 / 别人一律 false', () => {
-    expect(isOwner(undefined)).toBe(false);
-    expect(isOwner('')).toBe(false);
-    expect(isOwner('somebody-else')).toBe(false);
+    expect(isOwner(undefined, OWNER)).toBe(false);
+    expect(isOwner('', OWNER)).toBe(false);
+    expect(isOwner('somebody-else', OWNER)).toBe(false);
+  });
+
+  it('名单用逗号分隔也认，空名单谁都不放行', () => {
+    expect(isOwner(OWNER, `a, ${OWNER}`)).toBe(true);
+    expect(isOwner(OWNER, '')).toBe(false);
   });
 });
 
-describe('/reminders 鉴权（同 /tickets：只认所有者私聊）', () => {
-  it('所有者放行', () => {
-    const cmd = remindersCommand({});
+describe('/reminders 鉴权（同 /tickets：只认 owner 私聊）', () => {
+  const config = { ownerOpenid: OWNER } as never;
+
+  it('owner 放行', () => {
+    const cmd = remindersCommand({ config });
     expect(cmd.authorized?.(makeCtx(OWNER))).toBe(true);
   });
 
   it('陌生人返回空串（中间件判空就不发，彻底安静）', () => {
-    const cmd = remindersCommand({});
+    const cmd = remindersCommand({ config });
     expect(cmd.authorized?.(makeCtx('stranger'))).toBe('');
+  });
+
+  it('没配 owner 谁都不放行', () => {
+    expect(remindersCommand({}).authorized?.(makeCtx(OWNER))).toBe('');
   });
 
   it('只在 c2c 声明', () => {

@@ -253,7 +253,18 @@ sessionKey: `qqbot:${appId}:${scope}:${peerId}`，新会话铸造 UUID 会话 id
 
 只读，没有写方法——写仍然走 `/model`、`/new`。出口拿的是本插件那个 `PrefsStore` 实例，跟写者同一份内存态：不重读磁盘、不做热重载，所以不会出现「文件写了、出口还是旧的」。文件不存在或 JSON 损坏时 `PrefsStore` 已经吞掉异常，出口照原样返回空表，不抛错。
 
-在用的有 `dsh-timer`、`dsh-email`、`dsh-speak-up-qq`（都只为认所有者的私聊会话）。它们按「服务缺失」做兜底：`ctx.get('qqbot/prefs')` 拿不到就 warn 一次并回退直读文件，这段回退是过渡用的，等接口全覆盖再删。热重载撞名时 `provide` 只 warn 不抛，服务可能短暂不存在，所以兜底必须留着。
+在用的有 `dsh-timer`、`dsh-email`、`dsh-speak-up-qq`（都只为 owner 的私聊会话）。它们按「服务缺失」做兜底：`ctx.get('qqbot/prefs')` 拿不到就 warn 一次并回退直读文件，这段回退是过渡用的，等接口全覆盖再删。热重载撞名时 `provide` 只 warn 不抛，服务可能短暂不存在，所以兜底必须留着。
+
+## 本 fork 的说明
+
+本仓库是 [`tencent-connect/dsh-qqbot`](https://github.com/tencent-connect/dsh-qqbot) 的公开 fork，在 `local` 分支上维护以下本地改动：
+
+- `/tickets`、`/reminders` 两条只读私聊命令，鉴权名单由配置项 `ownerOpenid` 或环境变量 `QQBOT_OWNER_OPENID` 提供（逗号分隔可写多个），代码里不写死任何 openid。
+- 群聊工具白名单 `groupToolAllow`、私聊常驻 `sessionKeepAlivePeers`、启动预热 `sessionWarmupEnabled`。
+- `qqbot/prefs` 只读出口，供 `dsh-timer` / `dsh-email` 等插件读 per-peer 偏好。
+- `/reminders` 读 `dsh-timer` 的 sqlite：库路径用 `DSH_TIMER_DB` 覆盖，默认 `~/.dsh-timer/timer.db`，旧位置 `~/.dsh-timer/timer.db` 仅作兼容回退。
+
+上游许可与版权见 [LICENSE](./LICENSE)（MIT，保留上游版权行，fork 改动另行署名）。
 
 ## 设计原则
 

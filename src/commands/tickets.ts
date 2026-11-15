@@ -1,5 +1,5 @@
 /**
- * /tickets — 只读查看 dispatcher 的票（LOCAL_PATCH tickets）
+ * /tickets — 只读查看 dispatcher 的票
  *
  * 读数只问 dispatcher 的只读出口（`dispatcher/tickets` 的 payload），本文件不读
  * 盘、不折事件行；规整与渲染都在 ../tickets-view.ts，和 /new 的未结票拦截共用
@@ -24,7 +24,7 @@ import {
 import type { CommandDeps, CategorizedCommand } from './types.ts';
 import { isOwner } from './owner.ts';
 
-/** /tickets 只认所有者 owner 的私聊 openid（c2c 消息的 senderId 就是 user_openid，见 ./owner.ts） */
+/** /tickets 只认配置里的 owner openid（c2c 消息的 senderId 就是 user_openid，见 ./owner.ts） */
 
 /** all 的同义写法 */
 const ALL_ALIASES: Set<string> = new Set(['all', 'closed', 'history', '-a', '--all', '全部', '已结束']);
@@ -83,11 +83,11 @@ export function ticketsCommand({ config, readTickets }: Partial<CommandDeps> = {
     name: 'tickets',
     category: 'qqbot',
     scope: 'c2c',
-    // 白名单：只有所有者私聊能读票。authorized 返回非 true 时，中间件会把
+    // 白名单：只有 owner 私聊能读票。authorized 返回非 true 时，中间件会把
     // 返回值当提示发出去（字符串原样发）；这里返回空串，sendCommandResult
     // 判 content 为空就跳过发送，陌生人得到的是完全安静，
     // 同时 ctx.stop('command:unauthorized:tickets') 短路，消息不会进 agent。
-    authorized: (cmdCtx) => (isOwner(cmdCtx.message?.senderId) ? true : ''),
+    authorized: (cmdCtx) => (isOwner(cmdCtx.message?.senderId, config?.ownerOpenid) ? true : ''),
     description: '查看票：/tickets、/tickets all、/tickets <票号>',
     usage: [
       '/tickets',

@@ -12,7 +12,7 @@ import type { SessionRecord } from './types.ts';
 
 const NOW = 1_700_000_000_000;
 const TIMEOUT = 30 * 60 * 1000;
-const KEEP = '0000000000000000000000000000ABCD';
+const KEEP = 'test-owner-openid-0001';
 
 function record(scope: SessionRecord['scope'], peerId: string, lastActivity: number): SessionRecord {
   return {

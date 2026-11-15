@@ -40,16 +40,18 @@
     "im"
   ],
   "license": "MIT",
+  "author": "bigfatfish2026 <bigfatfish2026@163.com>",
   "engines": {
     "node": ">=20.3.0"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/tencent-connect/dsh-qqbot.git"
+    "url": "git+https://github.com/bigfatfish2026/dsh-qqbot.git",
+    "upstream": "https://github.com/tencent-connect/dsh-qqbot.git"
   },
   "homepage": "https://github.com/tencent-connect/dsh-qqbot#readme",
   "bugs": {
-    "url": "https://github.com/tencent-connect/dsh-qqbot/issues"
+    "url": "https://github.com/bigfatfish2026/dsh-qqbot/issues"
   },
   "dsh": {
     "bundle": {

@@ -166,7 +166,7 @@ describe('renderReminders（新格式：emoji + 日期 + 时间 + 正文全文�
     id: 'rem_x',
     dueAt: iso(2026, 11, 11, 9, 30),
     text: '该换钥匙了',
-    target: 'c2c:0000000000000000000000000000ABCD',
+    target: 'c2c:test-owner-openid-0001',
     state: 'pending',
     attempts: 0,
     ...over,

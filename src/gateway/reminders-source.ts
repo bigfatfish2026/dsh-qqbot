@@ -22,21 +22,26 @@ import { DatabaseSync } from 'node:sqlite';
 import { REMINDER_TABLE, type ReminderRow, type RemindersReader } from '../timer-reminders.ts';
 import type { Logger } from '../types.ts';
 
-/** 库路径的环境变量覆盖，和 dsh-timer 的 stateDbPath 默认值对齐 */
+/** 库路径的环境变量覆盖（优先级最高，建议与 dsh-timer 的 stateDbPath 对齐） */
 export const TIMER_DB_ENV = 'DSH_TIMER_DB';
 
-/** dsh-timer 的默认库：~/.dsh-timer/timer.db（plugins/dsh-timer/lib/index.js 的 stateDbPath） */
-export const DEFAULT_TIMER_DB_PATH = path.join(os.homedir(), '.dsh-timer', 'timer', 'timer.db');
+/** 新装环境的默认库：`~/.dsh-timer/timer.db` */
+export function defaultTimerDbPath(home: string = os.homedir()): string {
+  return path.join(home, '.dsh-timer', 'timer.db');
+}
 
 /** 只读查询：列名对齐 dsh-timer 的建表语句，只取渲染要用的字段 */
 const SELECT_ALL = `SELECT id, dueAt, text, target, state, attempts, lastError, nextAttemptAt
   FROM ${REMINDER_TABLE}
   ORDER BY dueAt ASC, createdAt ASC`;
 
-/** 库路径：环境变量优先，否则 dsh-timer 的默认位置 */
-export function resolveTimerDbPath(env: NodeJS.ProcessEnv = process.env): string {
+/** 库路径：环境变量优先，其次插件数据目录默认位置 */
+export function resolveTimerDbPath(
+  env: NodeJS.ProcessEnv = process.env,
+  home: string = os.homedir(),
+): string {
   const override = String(env[TIMER_DB_ENV] ?? '').trim();
-  return override || DEFAULT_TIMER_DB_PATH;
+  return override || defaultTimerDbPath(home);
 }
 
 /**

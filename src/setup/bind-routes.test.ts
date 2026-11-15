@@ -132,13 +132,13 @@ describe('bind-routes', () => {
   });
 
   it('GET state（bound）：优先返回脱敏 appId，不触碰扫码状态机', async () => {
-    const { routes, service } = createHarness({ boundAppId: () => '102120114' });
+    const { routes, service } = createHarness({ boundAppId: () => 'test-app' });
 
     const res = fakeRes();
     await invoke(routes.get(BIND_STATE_PATH), fakeReq('GET', { host: '127.0.0.1:3080' }), res);
 
     expect(res.statusCode).toBe(200);
-    expect(json(res)).toEqual({ phase: 'bound', appId: '102120114' });
+    expect(json(res)).toEqual({ phase: 'bound', appId: 'test-app' });
     expect(service.wireState).not.toHaveBeenCalled();
   });
 
@@ -179,13 +179,13 @@ describe('bind-routes', () => {
     const res = fakeRes();
     await invoke(
       routes.get(BIND_MANUAL_PATH),
-      fakeReq('POST', { host: '127.0.0.1:3080', 'content-type': 'application/json' }, '{"appId":"102120114","appSecret":"s3cr3t"}'),
+      fakeReq('POST', { host: '127.0.0.1:3080', 'content-type': 'application/json' }, '{"appId":"test-app","appSecret":"s3cr3t"}'),
       res,
     );
 
     expect(res.statusCode).toBe(200);
     expect(json(res)).toEqual({ ok: true, message: '凭据已保存，插件将自动重载' });
-    expect(manualSubmits).toEqual([{ appId: '102120114', appSecret: 's3cr3t' }]);
+    expect(manualSubmits).toEqual([{ appId: 'test-app', appSecret: 's3cr3t' }]);
   });
 
   it('POST manual：缺失字段 → 400', async () => {
@@ -193,7 +193,7 @@ describe('bind-routes', () => {
     const res = fakeRes();
     await invoke(
       routes.get(BIND_MANUAL_PATH),
-      fakeReq('POST', { host: '127.0.0.1:3080' }, '{"appId":"102120114"}'),
+      fakeReq('POST', { host: '127.0.0.1:3080' }, '{"appId":"test-app"}'),
       res,
     );
     expect(res.statusCode).toBe(400);
@@ -229,7 +229,7 @@ describe('bind-routes', () => {
 
   it('POST unbind（bound 态）：调用解绑处理并返回成功', async () => {
     const { routes } = createHarness({
-      boundAppId: () => '102120114',
+      boundAppId: () => 'test-app',
       onUnbind: () => ({ persisted: true }),
     });
     const res = fakeRes();
@@ -259,7 +259,7 @@ describe('bind-routes', () => {
     writeFileSync(patchPath, [
       '- id: im-qqbot',
       '  config:',
-      '    appId: "102120114"',
+      '    appId: "test-app"',
       '    appSecret: "s3cr3t"',
       '    requireMention: true',
       '',
@@ -268,11 +268,11 @@ describe('bind-routes', () => {
     // 扫码绑定成功时会写入进程 env：模拟该残留
     const savedAppId = process.env.QQBOT_APPID;
     const savedSecret = process.env.QQBOT_SECRET;
-    process.env.QQBOT_APPID = '102120114';
+    process.env.QQBOT_APPID = 'test-app';
     process.env.QQBOT_SECRET = 's3cr3t';
 
     try {
-      const { routes } = createHarness({ boundAppId: () => '102120114' });
+      const { routes } = createHarness({ boundAppId: () => 'test-app' });
       const res = fakeRes();
       await invoke(routes.get(BIND_UNBIND_PATH), fakeReq('POST', { host: '127.0.0.1:3080' }), res);
 
@@ -310,7 +310,7 @@ describe('bind-routes', () => {
     const before = readFileSync(patchPath, 'utf8');
 
     try {
-      const { routes } = createHarness({ boundAppId: () => '102120114' });
+      const { routes } = createHarness({ boundAppId: () => 'test-app' });
       const res = fakeRes();
       await invoke(routes.get(BIND_UNBIND_PATH), fakeReq('POST', { host: '127.0.0.1:3080' }), res);
 
@@ -332,12 +332,12 @@ describe('bind-routes', () => {
 
   it('GET config：回显生效配置且剔除 appSecret', async () => {
     const { routes } = createHarness({
-      currentConfig: () => ({ appId: '102120114', appSecret: 'SECRET', requireMention: true, cwd: '/tmp/w' }),
+      currentConfig: () => ({ appId: 'test-app', appSecret: 'SECRET', requireMention: true, cwd: '/tmp/w' }),
     });
     const res = fakeRes();
     await invoke(routes.get(BIND_CONFIG_PATH), fakeReq('GET', { host: '127.0.0.1:3080' }), res);
     expect(res.statusCode).toBe(200);
-    expect(json(res)).toEqual({ config: { appId: '102120114', requireMention: true, cwd: '/tmp/w' } });
+    expect(json(res)).toEqual({ config: { appId: 'test-app', requireMention: true, cwd: '/tmp/w' } });
   });
 
   it('POST config：白名单内合法值通过并触发合并写入', async () => {
